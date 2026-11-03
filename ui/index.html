@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini Cursor · 桌面编程智能体</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◆</span>
+        <span class="title">Mini Cursor</span>
+        <span class="sub">我的桌面编程智能体</span>
+      </div>
+      <div class="meta">
+        <span class="pill" id="modelPill">模型 …</span>
+        <span class="pill status offline" id="statusPill"><i></i>连接中</span>
+        <button class="ghost" id="resetBtn" type="button">新建会话</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="chat">
+        <div class="messages" id="messages">
+          <div class="welcome" id="welcome">
+            <h1>让它动你的文件</h1>
+            <p>四个工具：<code>read</code> <code>write</code> <code>edit</code> <code>bash</code>。右侧会实时显示每一步工具调用。</p>
+            <div class="chips">
+              <button class="chip" data-prompt="读一下 main.py，告诉我它是干什么的">read：看看 main.py</button>
+              <button class="chip" data-prompt="在 workspace 里新建 demo.txt，写三行内容，然后用 bash 打印出来">write + bash：建个文件</button>
+              <button class="chip" data-prompt="跑一下测试，把失败的原因告诉我">bash：跑测试</button>
+            </div>
+          </div>
+        </div>
+
+        <form class="composer" id="composer">
+          <textarea id="input" rows="3" placeholder="让智能体做点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <div class="actions">
+            <span class="hint" id="hint">Enter 发送 · Shift+Enter 换行</span>
+            <button class="danger" id="stopBtn" type="button" disabled>停止</button>
+            <button class="primary" id="sendBtn" type="submit">发送</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="trace">
+        <div class="trace-head">
+          <span>工具调用 trace</span>
+          <button class="ghost small" id="clearTrace" type="button">清空</button>
+        </div>
+        <div class="trace-list" id="traceList">
+          <div class="trace-empty">还没有工具调用</div>
+        </div>
+        <div class="trace-foot" id="workspacePath">工作目录：…</div>
+      </aside>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

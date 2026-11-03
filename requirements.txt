@@ -1,1 +1,9 @@
+# 模型调用
 requests>=2.31.0
+
+# 本地服务（WebSocket 实时推送）
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# 桌面窗口
+pywebview>=5.0

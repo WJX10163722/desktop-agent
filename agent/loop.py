@@ -17,6 +17,7 @@ agent.loop —— agent 的循环本体
 """
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -81,11 +82,26 @@ class Agent:
         self.system_prompt = system_prompt or f"{SYSTEM_TOOL}\n当前工作目录：{config.workspace}"
         self.on_event = on_event
         self.messages: list[Message] = [{"role": "system", "content": self.system_prompt}]
+        # 中断开关：界面点"停止"时置位，循环在下一个安全点真退出
+        self._stop = threading.Event()
 
     # ---------- 会话 ----------
     def reset(self) -> None:
         """开新会话。界面上的"新建"按钮调它。"""
         self.messages = [{"role": "system", "content": self.system_prompt}]
+        self._stop.clear()
+
+    def cancel(self) -> None:
+        """中断当前任务。
+
+        考察点是"中断是真停"：不是把按钮变灰假装停了，
+        而是循环在下一轮思考前、每个工具执行前真的跳出去。
+        """
+        self._stop.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._stop.is_set()
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         """往外广播事件。界面挂了自己崩，不能拖垮 agent。"""
@@ -98,6 +114,7 @@ class Agent:
 
     # ---------- 主循环 ----------
     def run(self, user_input: str) -> RunResult:
+        self._stop.clear()
         self.messages.append({"role": "user", "content": user_input})
         self._emit("user_message", content=user_input)
 
@@ -106,6 +123,10 @@ class Agent:
 
         try:
             for turn_index in range(self.max_turns):
+                if self._stop.is_set():
+                    self._emit("cancelled")
+                    return RunResult(answer=last_text, turns=turns, stop_reason="cancelled")
+
                 started = time.time()
                 reply = self.llm.chat(self.messages, tools=self.registry.schemas())
                 turn = Turn(index=turn_index, reply=reply, elapsed=time.time() - started)
@@ -130,6 +151,10 @@ class Agent:
                     last_text = reply.content
 
                 for call in reply.tool_calls:
+                    if self._stop.is_set():
+                        # 工具执行前也检查一次：避免"点了停止还在跑命令"
+                        self._emit("cancelled")
+                        return RunResult(answer=last_text, turns=turns, stop_reason="cancelled")
                     record = self._execute_tool_call(call)
                     turn.tool_calls.append(record)
                     self.messages.append({

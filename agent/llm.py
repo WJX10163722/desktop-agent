@@ -46,9 +46,15 @@ class DeepSeekLLM:
     def __init__(self, model: str | None = None, base_url: str | None = None, api_key: str | None = None) -> None:
         self.model = model or config.model
         self.base_url = base_url or config.base_url
-        self.api_key = api_key or config.require_key()
+        # 注意：这里不校验 Key，等到真正发请求时才校验。
+        # 否则没配 Key 时连窗口都打不开（构建 Agent 就抛异常），体验极差。
+        self.api_key = api_key or config.api_key
 
     def chat(self, messages: list[Message], tools: list[dict] | None = None) -> LLMReply:
+        if not self.api_key:
+            raise RuntimeError(
+                "还没有配置 API Key：请把 .env.example 复制成 .env，填入 DEEPSEEK_API_KEY 后重启程序。"
+            )
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
