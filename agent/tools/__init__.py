@@ -2,9 +2,10 @@
 agent.tools —— 工具层
 
 目录说明：
-    base.py  工具的"协议"：Tool / ToolResult / ToolRegistry
-    fs.py    文件类工具：read / write（edit 下一步加）
-    shell.py 命令类工具：bash（下一步加）
+    base.py   工具的"协议"：Tool / ToolResult / ToolRegistry
+    fs.py     文件读写：read / write
+    patch.py  局部修改：edit
+    shell.py  命令执行：bash
 
 为什么工具要"注册"而不是 if-else：
     评分表里"代码结构"看的就是这一点。加第五个工具时你只改一个文件，
@@ -12,6 +13,8 @@ agent.tools —— 工具层
 """
 from .base import Tool, ToolRegistry, ToolResult
 from .fs import tool_read, tool_write
+from .patch import tool_edit
+from .shell import tool_bash
 
 
 def build_default_registry(workspace: str | None = None) -> ToolRegistry:
@@ -20,9 +23,12 @@ def build_default_registry(workspace: str | None = None) -> ToolRegistry:
     每个新工具只需要在这里 register 一行，循环那边自动就能用。
     """
     registry = ToolRegistry(workspace=workspace)
-    for tool in (tool_read, tool_write):
+    for tool in (tool_read, tool_write, tool_edit, tool_bash):
         registry.register(tool)
     return registry
 
 
-__all__ = ["Tool", "ToolResult", "ToolRegistry", "build_default_registry", "tool_read", "tool_write"]
+__all__ = [
+    "Tool", "ToolResult", "ToolRegistry", "build_default_registry",
+    "tool_read", "tool_write", "tool_edit", "tool_bash",
+]

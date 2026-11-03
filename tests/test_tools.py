@@ -81,6 +81,48 @@ def main() -> None:
     r = reg.call("write", '{"path": "../escape.txt", "content": "x"}')
     check("越界写被拒绝", not r.ok)
 
+    print("\n[6] edit 的四种情况")
+    src = tmp / "edit_demo.py"
+    src.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+
+    r = reg.call("edit", '{"path": "_selftest/edit_demo.py", "old_string": "return a - b", "new_string": "return a + b"}')
+    check("唯一匹配替换成功", r.ok and "return a + b" in src.read_text(encoding="utf-8"), r.content[:120])
+    check("返回 diff 方便界面预览", "+++" in r.content and "-    return a - b" in r.content)
+
+    r = reg.call("edit", '{"path": "_selftest/edit_demo.py", "old_string": "这行根本不存在", "new_string": "x"}')
+    check("找不到时报错且不改文件", not r.ok and "return a + b" in src.read_text(encoding="utf-8"))
+
+    r = reg.call("edit", '{"path": "_selftest/edit_demo.py", "old_string": "     return a + b", "new_string": "x"}')
+    check("缩进不一致时给出诊断", not r.ok and "空白" in r.content)
+
+    dup = tmp / "dup.txt"
+    dup.write_text("x = 1\ny = 2\nx = 1\n", encoding="utf-8")
+    r = reg.call("edit", '{"path": "_selftest/dup.txt", "old_string": "x = 1", "new_string": "x = 9"}')
+    check("多处匹配时拒绝猜测", not r.ok and "2 次" in r.content and "1, 3" in r.content)
+    check("拒绝时文件没被改动", dup.read_text(encoding="utf-8").count("x = 1") == 2)
+
+    r = reg.call("edit", '{"path": "_selftest/dup.txt", "old_string": "x = 1", "new_string": "x = 9", "replace_all": true}')
+    check("replace_all 可以全部替换", r.ok and dup.read_text(encoding="utf-8").count("x = 9") == 2)
+
+    r = reg.call("edit", '{"path": "_selftest/edit_demo.py", "old_string": "", "new_string": "x"}')
+    check("空 old_string 被拒绝", not r.ok and "不能为空" in r.content)
+
+    print("\n[7] bash 的五种情况")
+    r = reg.call("bash", '{"command": "echo hello"}')
+    check("正常命令成功且带 exit_code", r.ok and "hello" in r.content and "exit_code：0" in r.content)
+
+    r = reg.call("bash", '{"command": "python -c \\"print(1/0)\\"", "timeout": 20}')
+    check("失败命令返回非零退出码和 stderr", not r.ok and "ZeroDivisionError" in r.content)
+
+    r = reg.call("bash", '{"command": "python -c \\"import time;time.sleep(5)\\"", "timeout": 1}')
+    check("超时被强制终止", not r.ok and "超时" in r.content)
+
+    r = reg.call("bash", '{"command": "python -c \\"print(chr(120)*20000)\\"", "timeout": 20}')
+    check("超长输出被截断", r.ok and "省略" in r.content)
+
+    r = reg.call("bash", '{"command": "shutdown /s /t 0"}')
+    check("危险命令被拦截", not r.ok and "高风险" in r.content)
+
     # 收尾：删掉测试产生的临时文件，别把仓库搞脏
     import shutil
 

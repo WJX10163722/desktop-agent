@@ -45,7 +45,9 @@ DEMO_SCRIPT = [
     {"tool": "read", "args": {"path": "requirements.txt"}, "content": "我先看一下依赖文件。"},
     {"tool": "read", "args": {"path": "不存在的文件.py"}},  # 故意制造一次失败
     {"tool": "write", "args": {"path": "hello.txt", "content": "第一行\n第二行\n"}, "content": "写个文件试试。"},
-    "演示结束：读成功、读失败、写入成功，三种情况都走了正常路径。",
+    {"tool": "edit", "args": {"path": "hello.txt", "old_string": "第二行", "new_string": "第二行（改过）"}},
+    {"tool": "bash", "args": {"command": "type hello.txt"}},
+    "演示结束：读成功、读失败、写入、编辑、执行命令，四种工具全部走通。",
 ]
 
 
