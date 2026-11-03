@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -32,7 +33,22 @@ from agent.loop import Agent
 from agent.tools import build_default_registry
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-UI_DIR = ROOT_DIR / "ui"
+
+
+def _ui_dir() -> Path:
+    """定位界面文件。
+
+    普通 python 运行：就在源码目录的 ui/ 下。
+    PyInstaller 打包后：__file__ 指向临时解压目录 _MEIxxxx，
+    界面文件是打包时用 --add-data 塞进去的，在 sys._MEIPASS/ui。
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        return base / "ui"
+    return ROOT_DIR / "ui"
+
+
+UI_DIR = _ui_dir()
 
 app = FastAPI(title="桌面编程智能体", version="0.4.0")
 app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")

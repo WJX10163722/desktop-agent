@@ -10,6 +10,7 @@ python -m PyInstaller `
   --noconsole `
   --name MiniCursor `
   --collect-all webview `
+  --add-data "ui;ui" `
   --hidden-import uvicorn.logging `
   --hidden-import uvicorn.loops.auto `
   --hidden-import uvicorn.protocols.http.auto `
