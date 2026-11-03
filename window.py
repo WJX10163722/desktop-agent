@@ -62,7 +62,10 @@ def main() -> None:
     from server.app import app
 
     port = free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    # log_config=None 是关键：uvicorn 默认的日志配置要用彩色输出，
+    # 会去摸 sys.stdout——而 --noconsole 的 exe 里它是 None，直接 AttributeError。
+    # 关掉它的日志配置（我们也不需要控制台日志），问题消失。
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, log_level="warning")
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True).start()
 
@@ -107,5 +110,24 @@ def _wait_until_ready(url: str, requests_mod, timeout: float = 20.0) -> bool:
     return False
 
 
+def _log_uncaught(kind, value, tb) -> None:
+    """--noconsole 的 exe 里 print 看不见、报错只有一个弹窗。
+
+    把未捕获异常写进 exe 旁边的 error.log，排障就不用靠猜了。
+    """
+    import traceback
+
+    root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    try:
+        with open(root / "error.log", "a", encoding="utf-8") as f:
+            f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+            traceback.print_exception(kind, value, tb, file=f)
+    except OSError:
+        pass
+
+
 if __name__ == "__main__":
+    from pathlib import Path
+
+    sys.excepthook = _log_uncaught
     main()
