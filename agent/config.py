@@ -50,9 +50,13 @@ class Config:
         self.base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
         self.model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-        # 安全兜底：联网但不花钱的上限，后面 loop 会用到
+        # 安全兜底：循环上限，防止模型反复调工具停不下来
         self.max_turns: int = int(os.getenv("AGENT_MAX_TURNS", "30"))
         self.request_timeout: int = int(os.getenv("AGENT_TIMEOUT", "120"))
+
+        # 工作目录：agent 能碰到的所有文件都被限制在这个目录里（沙箱）
+        self.workspace: Path = Path(os.getenv("AGENT_WORKSPACE", str(ROOT_DIR))).expanduser().resolve()
+        self.workspace.mkdir(parents=True, exist_ok=True)
 
     def require_key(self) -> str:
         """用到真模型时才校验，mock 模式不需要 Key。"""

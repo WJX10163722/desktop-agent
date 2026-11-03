@@ -21,6 +21,10 @@ build/
 .DS_Store
 Thumbs.db
 
+# 测试与运行产物
+_selftest/
+hello.txt
+
 # 运行日志与会话记录
 logs/
 sessions/

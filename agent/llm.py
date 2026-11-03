@@ -90,18 +90,33 @@ class MockLLM:
     这是我认为整个项目里最值钱的一个小工具：
     没网、没 Key、CI 里跑测试的时候，你照样能把 loop 跑通。
     后面测试工具调用、异常处理，全靠它喂剧本。
+
+    剧本格式（一轮一条）：
+        字符串                         → 直接回一句话
+        {"tool": "read", "args": {...}} → 发起一次工具调用
     """
 
-    def __init__(self, script: list[str] | None = None) -> None:
-        # script 是预设的回答剧本，一轮一条
+    def __init__(self, script: list[str | dict] | None = None) -> None:
         self.script = script or ["[mock] 我是假模型，循环跑通了。"]
         self.calls: list[dict] = []  # 记录每次被调用的内容，方便断言
 
     def chat(self, messages: list[Message], tools: list[dict] | None = None) -> LLMReply:
         self.calls.append({"messages": messages, "tools": tools})
-        idx = len(self.calls) - 1
-        content = self.script[min(idx, len(self.script) - 1)]
-        return LLMReply(content=content)
+        idx = min(len(self.calls) - 1, len(self.script) - 1)
+        step = self.script[idx]
+
+        if isinstance(step, dict) and "tool" in step:
+            call = {
+                "id": f"call_{idx}",
+                "type": "function",
+                "function": {
+                    "name": step["tool"],
+                    "arguments": json.dumps(step.get("args", {}), ensure_ascii=False),
+                },
+            }
+            return LLMReply(content=step.get("content", ""), tool_calls=[call])
+
+        return LLMReply(content=str(step))
 
 
 def build_llm(mock: bool = False):
