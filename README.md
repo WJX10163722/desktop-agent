@@ -1,104 +1,195 @@
-# Mini Cursor · 我的桌面编程智能体
+# Mini Cursor：桌面智能体课程作业
 
-一个带**原生桌面窗口**的迷你编程智能体：一个循环 + 一个模型接口 + **四个工具**
-（`read` / `write` / `edit` / `bash`），能真正读写你的文件、跑命令、修 bug。
-课堂作业《Python 智能体专题：做你自己的 Cursor》的交付项目。
-
-## Quick Start（三步启动）
+## 快速开始（三步启动）
 
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/WJX10163722/desktop-agent.git
 cd desktop-agent
 
-# 2. 装依赖
-pip install -r requirements.txt
+# 2. 安装依赖
+python -m pip install -r requirements.txt
 
 # 3. 配置 Key 并启动
-copy .env.example .env      # 打开 .env，填入你的 DEEPSEEK_API_KEY
+copy .env.example .env      # 打开 .env，填入自己的 DEEPSEEK_API_KEY
 python window.py
 ```
 
-弹出深色窗口即启动成功。没有 Key 也可以先看界面：
+也可以直接下载 Release 中的 `MiniCursor.exe`，双击运行，无需安装 Python。
+
+## 1. 项目简介
+
+Mini Cursor 是一个基于 Python、pywebview 和 DeepSeek 模型接口开发的桌面智能体课程项目，实现了一个具备模型对话能力、本地文件操作能力和工具调用能力的桌面应用（对应作业要求中的“做你自己的 Cursor”）。
+
+项目采用“智能体循环 + 工具注册表”的架构：一个循环负责“思考 → 调用工具 → 读取结果 → 继续思考”，四个本地工具负责真正动手，界面负责把每一步实时展示出来。程序以原生桌面窗口的形式交付，双击即可运行，不依赖浏览器和本地网页地址。
+
+## 2. 主要功能
+
+### 2.1 桌面交互界面
+
+- 原生桌面窗口（pywebview，有标题栏，不是浏览器标签页）
+- 对话区：用户提问、模型回答、流式过程提示
+- 工具调用 trace 面板：每次调用的工具名、参数、结果、耗时、成功或失败
+- 中断按钮：随时停止当前任务
+- 状态指示：就绪、运行中、模型未配置等状态
+
+### 2.2 DeepSeek 模型接入
+
+通过 OpenAI 兼容接口调用 DeepSeek 模型，实现自然语言对话与工具调用（function calling）。模型配置通过环境变量读取，包括 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`。
+
+模型接入层位于 `agent/llm.py`，上层只依赖 `chat(messages, tools) -> LLMReply` 这一接口，更换为其他 OpenAI 兼容模型只需改动该文件。模块内另带有 `MockLLM`（假模型），用于在没有 Key、没有网络的情况下跑通全部自测。
+
+### 2.3 本地工具
+
+| 工具 | 功能 |
+|---|---|
+| `read` | 读取工作区内的文本文件，返回带行号的内容，支持分页、二进制识别、超长单行截断 |
+| `write` | 创建或覆盖文件，自动创建父目录，采用临时文件加改名的方式写入 |
+| `edit` | 精确字符串替换，必须唯一匹配；多处匹配时报错并列出所在行号，失败不改动文件，成功后返回 diff |
+| `bash` | 执行本地命令，返回 stdout、stderr 与 exit_code，包含超时强杀、输出截断、编码兼容与危险命令拦截 |
+
+工具通过 `ToolRegistry` 注册后交给模型，新增工具只需在 `agent/tools/__init__.py` 中注册一行，不需要修改循环代码。
+
+### 2.4 MCP 外部工具
+
+程序启动时通过 MCP（Model Context Protocol）连接一个独立的工具服务 `mcp_servers/workspace_server.py`（官方 SDK 实现，stdio 子进程），自动发现并注册它提供的工具：
+
+| MCP 工具 | 功能 |
+|---|---|
+| `mcp__workspace__now` | 返回当前日期时间 |
+| `mcp__workspace__file_stats` | 统计文件行数、字符数、字节数 |
+| `mcp__workspace__list_dir` | 列出目录下的文件与子目录 |
+
+发现到的工具以 `mcp__` 前缀注册进同一张工具表，模型调用方式与本地工具完全一致。
+
+## 3. 安全机制
+
+1. **工作区路径限制**：所有文件工具都会校验目标路径，`../` 等越界访问一律拒绝，避免访问工作目录以外的文件。
+2. **编辑唯一匹配**：`edit` 只在目标片段唯一出现时执行，多处匹配直接报错，避免误改；失败时不写入任何内容。
+3. **命令超时与拦截**：`bash` 设置单次命令超时，超时后强制终止进程树，并拦截关机、格式化等高风险命令。
+4. **输出截断**：命令输出与文件内容过长时间截断，避免上下文被一次性撑爆。
+5. **循环次数限制**：单次任务限制最大轮数，防止模型反复调用工具停不下来。
+6. **工具参数校验**：检查工具名称与参数字段，非法参数返回错误信息而不是抛出异常。
+7. **密钥保护**：通过 `.env` 保存 API Key，并用 `.gitignore` 排除，公开仓库中只保留不含真实密钥的 `.env.example`。
+8. **中断机制**：停止信号在每轮思考前和每个工具执行前各检查一次，中断后不会继续执行后续工具。
+
+## 4. 环境要求
+
+- 操作系统：Windows 10 / 11（打包产物为 Windows 可执行文件）
+- Python：3.12（项目开发环境）
+- 桌面窗口：pywebview
+- 服务层：FastAPI + uvicorn（WebSocket 事件推送）
+- 模型接口：DeepSeek OpenAI 兼容接口
+- 外部工具协议：MCP 官方 Python SDK
+
+## 5. 安装依赖
+
+在项目根目录运行：
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+## 6. 配置 DeepSeek 模型
+
+1. 将 `.env.example` 复制一份，并命名为 `.env`。
+2. 在 `.env` 文件中填写自己的模型配置：
+
+```dotenv
+DEEPSEEK_API_KEY=填写自己的API密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+3. 保存配置后启动程序（配置在启动时读取，修改后需重启）。
+
+**安全提示：不要将 `.env`、API Key 或其他个人凭据上传到 GitHub。** 公开仓库中只保留不含真实密钥的 `.env.example`。
+
+## 7. 启动桌面应用
+
+```bash
+python window.py
+```
+
+启动后会弹出一个深色桌面窗口，出现即表示启动成功。没有 Key 时也可以先用假模型查看界面：
 
 ```bash
 # Windows PowerShell
 $env:AGENT_MOCK="1"; python window.py
 ```
 
-## 它能干什么
-
-- **read**：读文件（带行号、自动分页、二进制识别、超长单行截断）
-- **write**：新建/覆盖文件（自动建父目录、原子写入）
-- **edit**：精确替换（必须唯一匹配，多处出现直接报错，失败不改动文件，返回 diff）
-- **bash**：执行命令（stdout/stderr/exit_code、超时强杀、输出截断、危险命令拦截）
-
-所有文件操作被限制在工作目录沙箱内，`../` 逃逸一律拒绝。
-
-## MCP 外部工具
-
-除了内置四个工具，程序启动时还会通过 **MCP（Model Context Protocol）** 连接一个独立的
-工具服务 `mcp_servers/workspace_server.py`（stdio 子进程，官方 SDK 实现），自动发现并注册它提供的工具：
-
-| MCP 工具 | 作用 |
-|----------|------|
-| `mcp__workspace__now` | 当前日期时间 |
-| `mcp__workspace__file_stats` | 文件行数 / 字符数 / 字节数 |
-| `mcp__workspace__list_dir` | 目录清单 |
-
-接入过程就是标准 MCP 四步：`initialize` 握手 → `tools/list` 拉清单 → `tools/call` 调用 → 关闭。
-发现到的工具会带 `mcp__` 前缀注册进同一张工具表，模型调用方式和本地工具完全一致。
-
-```bash
-python -m mcp_servers.workspace_server   # 单独跑 server（调试用）
-```
-
-打包后的 exe 自带 server 角色：`MiniCursor.exe --mcp-stdio` 会让它以 MCP server 方式运行
-（exe 里没有 python 解释器，所以"自己 spawn 自己"）。
-
-## 目录结构
-
-```
-desktop-agent/
-├── window.py            # 桌面窗口入口（pywebview + 动态端口）
-├── main.py              # 命令行调试入口
-├── agent/
-│   ├── loop.py          # agent 循环：思考 → 调工具 → 看结果 → 再思考
-│   ├── llm.py           # 模型适配层（OpenAI 兼容协议，可换模型）
-│   ├── prompts.py       # 系统提示词
-│   ├── config.py        # 配置与 .env 加载
-│   └── tools/
-│       ├── base.py      # 工具协议与注册表（失败即消息，异常即兜底）
-│       ├── fs.py        # read / write
-│       ├── patch.py     # edit
-│       └── shell.py     # bash
-├── mcp_servers/
-│   └── workspace_server.py  # 独立 MCP server（时间 / 文件统计 / 目录列举）
-├── server/app.py        # FastAPI + WebSocket：把每一步实时推给界面
-├── ui/                  # 界面（零框架：index.html + style.css + app.js）
-└── tests/               # 自测：工具层 29 条 + 服务层 18 条
-```
-
-## 设计上比较在意的地方
-
-- **分层**：`agent/` 不知道界面的存在，`ui/` 不知道模型的存在，中间只走 WebSocket 事件
-- **失败是消息不是异常**：工具报错返回一句"人话 + 下一步建议"，模型能自己纠正，循环永不崩
-- **中断是真停**：停止信号在下一轮思考前、每个工具执行前各检查一次，不是假装停
-- **trace 可见**：每次工具调用的参数、结果、耗时实时摊开在右侧面板
-
-## 自测
-
-```bash
-python tests/test_tools.py    # 工具层：注册/兜底/分页/沙箱/edit/bash
-python tests/test_server.py   # 服务层：HTTP/WebSocket 事件流/异常输入（内置 mock 模型）
-```
-
-## 打包
+打包后的独立程序：
 
 ```powershell
 .\build.ps1        # 产出 dist\MiniCursor.exe
+dist\MiniCursor.exe
 ```
 
-## License
+## 8. 运行自动化测试
+
+```bash
+python tests/test_tools.py     # 工具层
+python tests/test_server.py    # 服务层
+python tests/test_mcp.py       # MCP 集成
+```
+
+测试内容包括工具注册与参数校验、路径沙箱、文件读取分页、写入与覆盖、编辑的唯一匹配与失败不改动、命令超时与输出截断、危险命令拦截、WebSocket 事件流格式、异常输入处理、MCP 握手与工具调用等。
+
+截至本次更新，三组测试共执行 60 项，全部通过（工具层 29 项、服务层 18 项、MCP 13 项），失败数量为 0。测试不依赖网络与 API Key。正式发布前仍应重新运行测试，并以实际运行结果作为最终测试记录。
+
+## 9. MCP 实现状态
+
+项目已实现真实 MCP 集成，不是占位模块：
+
+- **服务端**：`mcp_servers/workspace_server.py`，使用 MCP 官方 Python SDK 编写，通过 stdio 传输对外提供三个工具。
+- **客户端**：`agent/mcp_client.py`，负责启动子进程、完成握手、拉取工具清单、调用工具，并把发现的工具注册进本地工具注册表。
+- **协议流程**：`initialize` 握手 → `tools/list` 拉取工具清单 → `tools/call` 调用工具 → 结束后关闭连接，全部为标准 JSON-RPC 消息。
+- **打包兼容**：exe 环境没有 Python 解释器，因此 `MiniCursor.exe --mcp-stdio` 会让程序自身以 MCP 服务端方式运行，由主进程作为客户端连接。
+- **失败降级**：MCP 连接失败时只打印提示，不影响本地四个工具与界面正常运行。
+
+## 10. 项目目录结构
+
+```text
+desktop-agent/
+├── window.py                # 桌面窗口入口（pywebview + 动态端口）
+├── main.py                  # 命令行调试入口
+├── build.ps1                # 一键打包脚本（PyInstaller）
+├── requirements.txt         # 项目依赖
+├── .env.example             # 环境变量配置模板
+├── .gitignore               # Git 忽略规则
+├── report.md                # 设计报告
+├── agent/                   # 智能体
+│   ├── loop.py              # 循环：思考 → 调工具 → 看结果 → 再思考
+│   ├── llm.py               # 模型接口与假模型
+│   ├── prompts.py           # 系统提示词
+│   ├── config.py            # 配置与 .env 加载
+│   ├── mcp_client.py        # MCP 客户端
+│   └── tools/               # 本地工具
+│       ├── base.py          # 工具协议与注册表
+│       ├── fs.py            # read / write
+│       ├── patch.py         # edit
+│       └── shell.py         # bash
+├── mcp_servers/
+│   └── workspace_server.py  # 独立 MCP 服务端
+├── server/
+│   └── app.py               # FastAPI + WebSocket 事件推送
+├── ui/                      # 界面（index.html / style.css / app.js）
+└── tests/                   # 自动化测试
+```
+
+## 11. 项目当前状态与后续改进
+
+当前版本已实现：桌面窗口与交互界面、DeepSeek 模型对话、四个本地工具、工具调用 trace 展示、任务中断、MCP 外部工具接入，并配有 60 项自动化测试。
+
+后续可继续完善：会话持久化（关闭窗口后保留历史）、上下文压缩（长对话自动摘要）、失败自动重试、bash 的更严格沙箱隔离、第三方 MCP 服务端接入，以及 macOS 平台打包。
+
+本项目对已实现功能与尚未实现功能进行区分，不将未完成的部分描述为已完成能力。
+
+## 12. 课程项目说明
+
+本项目用于展示桌面智能体的基础架构设计、模型接口接入、本地工具封装、工具调用安全控制、MCP 协议集成与自动化测试等内容。
+
+- 仓库：<https://github.com/WJX10163722/desktop-agent>
+- Release：<https://github.com/WJX10163722/desktop-agent/releases/tag/v1.0.0>
 
 仅用于课程作业展示。
