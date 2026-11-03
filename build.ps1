@@ -1,4 +1,4 @@
-# build.ps1 —— 一键打包
+﻿# build.ps1 —— 一键打包
 # 产出：dist\MiniCursor.exe（双击即可用的单文件桌面程序）
 #
 # 用法：powershell -ExecutionPolicy Bypass -File .\build.ps1

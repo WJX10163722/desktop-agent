@@ -84,9 +84,18 @@ Release：<https://github.com/WJX10163722/desktop-agent/releases/tag/v1.0.0>
 python tests/test_tools.py    29 条：注册/兜底/分页/沙箱/edit 五情况/bash 五情况
 python tests/test_server.py   18 条：HTTP/WebSocket 事件流/异常输入（内置 mock）
 python tests/test_mcp.py      13 条：握手/tools list/tools call/沙箱/注册表集成
+python tests/test_agent.py    16 条：重试策略（网络/401/5xx）与上下文压缩边界
 ────────────────────────────────
-合计 60 条，全部不依赖网络与 API Key
+合计 76 条，全部不依赖网络与 API Key
 ```
+
+## 六之二、稳定性两个机制
+
+1. **失败重试**：网络异常、超时、429、5xx 退避重试（默认 3 次）；4xx 不重试。
+   演示现场网络抖动时，这条决定你是"等两秒继续"还是"红字道歉"。
+2. **上下文压缩**：超过预算（默认 24000 字）把中段折成摘要，保留 system + 最近 8 条。
+   只发生在轮与轮之间，绝不会拆散 assistant(tool_calls) 与 tool 结果的配对——
+   这个配对一旦被截断，接口直接 400，是我们踩过的坑。
 
 ## 七、现场演示脚本（5 分钟）
 
