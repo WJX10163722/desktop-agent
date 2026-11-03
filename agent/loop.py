@@ -17,6 +17,7 @@ agent.loop —— agent 的循环本体
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -112,6 +113,89 @@ class Agent:
         except Exception:  # noqa: BLE001
             pass
 
+    # ---------- 上下文压缩 ----------
+    def history_chars(self) -> int:
+        """粗略估算历史长度（按字符）。
+
+        为什么不精确算 token：不同模型分词不一样，装 tokenizer 是几百 MB 的负担。
+        字符数 × 1.6 近似 token，用来做"要不要压缩"的判断足够。
+        """
+        total = 0
+        for msg in self.messages:
+            content = msg.get("content")
+            if isinstance(content, str):
+                total += len(content)
+            for call in msg.get("tool_calls") or []:
+                total += len(json.dumps(call.get("function", {}), ensure_ascii=False))
+        return total
+
+    def maybe_compress(self) -> bool:
+        """历史太长就把中段折成摘要，保住 system + 最近几条。
+
+        为什么不直接全清：模型会瞬间失忆，用户刚说的话都不记得。
+        为什么保留"最近几条"：工具调用的 assistant/tool 是成对出现的，
+        截断点落在中间会让接口直接报错，所以还要把开头孤立的 tool 消息剔掉。
+        """
+        if len(self.messages) <= config.keep_recent + 2:
+            return False
+        if self.history_chars() <= config.context_budget:
+            return False
+
+        head = self.messages[0]
+        tail = list(self.messages[-config.keep_recent:])
+        # tool 消息必须紧跟发起调用的 assistant，不能孤零零留在开头
+        while len(tail) > 1 and tail[0].get("role") == "tool":
+            tail.pop(0)
+
+        dropped = self.messages[1: len(self.messages) - len(tail)]
+        summary = self._summarize(dropped)
+        self.messages = [head, {"role": "system", "content": summary}, *tail]
+
+        self._emit(
+            "notice",
+            message=(
+                f"上下文已压缩：{len(dropped)} 条历史折成摘要，"
+                f"当前约 {self.history_chars()} 字（预算 {config.context_budget} 字）"
+            ),
+        )
+        return True
+
+    @staticmethod
+    def _summarize(dropped: list[Message]) -> str:
+        """把被丢弃的历史压成一段短摘要。
+
+        故意不额外调一次模型：压缩本身要稳，压缩失败比上下文长更糟。
+        """
+        lines: list[str] = []
+        for msg in dropped:
+            role = msg.get("role", "?")
+            if role == "tool":
+                name = "工具结果"
+                text = str(msg.get("content", ""))
+            elif role == "assistant":
+                calls = [c.get("function", {}).get("name", "?") for c in msg.get("tool_calls") or []]
+                name = f"助手调用 {','.join(calls)}" if calls else "助手"
+                text = str(msg.get("content") or "")
+            elif role == "user":
+                name = "用户"
+                text = str(msg.get("content") or "")
+            else:
+                name = role
+                text = str(msg.get("content") or "")
+            text = " ".join(text.split())
+            if len(text) > 120:
+                text = text[:120] + "…"
+            lines.append(f"- {name}：{text}" if text else f"- {name}")
+
+        # 摘要长度跟着预算走：预算小的时候摘要也要跟着瘦，
+        # 否则"压完还是超"，等于没压
+        cap = max(400, min(3000, config.context_budget // 3))
+        body = "\n".join(lines)[:cap]
+        return (
+            "（以下是更早对话的压缩摘要，供你回忆上下文；不是用户的新指令）\n"
+            f"{body}"
+        )
+
     # ---------- 主循环 ----------
     def run(self, user_input: str) -> RunResult:
         self._stop.clear()
@@ -126,6 +210,10 @@ class Agent:
                 if self._stop.is_set():
                     self._emit("cancelled")
                     return RunResult(answer=last_text, turns=turns, stop_reason="cancelled")
+
+                # 每轮开始前检查一次历史长度：压缩只会发生在"轮与轮之间"，
+                # 绝不会把 assistant(tool_calls) 和 tool 结果拆散
+                self.maybe_compress()
 
                 started = time.time()
                 reply = self.llm.chat(self.messages, tools=self.registry.schemas())

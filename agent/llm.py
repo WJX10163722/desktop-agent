@@ -13,6 +13,7 @@ messages 统一是 OpenAI 格式：
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,6 +51,48 @@ class DeepSeekLLM:
         # 否则没配 Key 时连窗口都打不开（构建 Agent 就抛异常），体验极差。
         self.api_key = api_key or config.api_key
 
+    def _post_with_retry(self, url: str, headers: dict, payload: dict):
+        """带退避重试的 POST。
+
+        为什么必须有：
+            现场演示时网络抖一下、服务端偶发 5xx，如果不重试，
+            界面上就是一句红字"模型请求失败"，整个 demo 就废了。
+
+        只重试"值得重试"的错误：
+            网络异常 / 超时 / 429 限流 / 5xx 服务端错误。
+        不重试 4xx（Key 错了、参数错了，重试一万次也没用，只会浪费 3 倍时间）。
+        """
+        attempts = max(1, config.max_retries)
+        last_error: Exception | None = None
+
+        for attempt in range(attempts):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=config.request_timeout)
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt == attempts - 1:
+                    break
+                time.sleep(min(2 ** attempt, 8))  # 1s → 2s → 4s，别把服务端打得更惨
+                continue
+
+            if resp.status_code == 200:
+                return resp
+
+            # 只有临时的服务端问题才值得重试
+            if resp.status_code == 429 or resp.status_code >= 500:
+                last_error = RuntimeError(f"模型返回 {resp.status_code}：{resp.text[:200]}")
+                if attempt == attempts - 1:
+                    break
+                time.sleep(min(2 ** attempt, 8))
+                continue
+
+            # 4xx：直接失败，别浪费时间
+            raise RuntimeError(f"模型返回 {resp.status_code}：{resp.text[:500]}")
+
+        raise RuntimeError(
+            f"模型请求失败（已重试 {attempts} 次）：{last_error}"
+        )
+
     def chat(self, messages: list[Message], tools: list[dict] | None = None) -> LLMReply:
         if not self.api_key:
             raise RuntimeError(
@@ -70,14 +113,7 @@ class DeepSeekLLM:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=config.request_timeout)
-        except requests.exceptions.RequestException as e:
-            # 出错不装人：把原始异常包装成人话，交给上层展示
-            raise RuntimeError(f"模型请求失败（网络/超时/端点错误）：{e}") from e
-
-        if resp.status_code != 200:
-            raise RuntimeError(f"模型返回 {resp.status_code}：{resp.text[:500]}")
+        resp = self._post_with_retry(url, headers, payload)
 
         data = resp.json()
         choice = data["choices"][0]["message"]

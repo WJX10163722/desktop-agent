@@ -78,6 +78,13 @@ class Config:
         self.max_turns: int = int(os.getenv("AGENT_MAX_TURNS", "30"))
         self.request_timeout: int = int(os.getenv("AGENT_TIMEOUT", "120"))
 
+        # 失败重试：网络抖动、限流、5xx 都不该让现场演示直接翻车
+        self.max_retries: int = int(os.getenv("AGENT_MAX_RETRIES", "3"))
+
+        # 上下文压缩：历史字数超过预算就把中段折成摘要（按字符估算，中文约 1.6 字符/token）
+        self.context_budget: int = int(os.getenv("AGENT_CONTEXT_BUDGET", "24000"))
+        self.keep_recent: int = int(os.getenv("AGENT_KEEP_RECENT", "8"))
+
         # 工作目录：agent 能碰到的所有文件都被限制在这个目录里（沙箱）
         self.workspace: Path = Path(os.getenv("AGENT_WORKSPACE", str(ROOT_DIR))).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)
