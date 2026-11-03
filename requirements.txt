@@ -7,3 +7,6 @@ uvicorn[standard]>=0.27.0
 
 # 桌面窗口
 pywebview>=5.0
+
+# MCP 协议（外部工具）；[cli] 额外带 typer，打包时需要
+mcp[cli]>=2.3.0

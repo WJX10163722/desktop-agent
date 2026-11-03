@@ -35,6 +35,27 @@ $env:AGENT_MOCK="1"; python window.py
 
 所有文件操作被限制在工作目录沙箱内，`../` 逃逸一律拒绝。
 
+## MCP 外部工具
+
+除了内置四个工具，程序启动时还会通过 **MCP（Model Context Protocol）** 连接一个独立的
+工具服务 `mcp_servers/workspace_server.py`（stdio 子进程，官方 SDK 实现），自动发现并注册它提供的工具：
+
+| MCP 工具 | 作用 |
+|----------|------|
+| `mcp__workspace__now` | 当前日期时间 |
+| `mcp__workspace__file_stats` | 文件行数 / 字符数 / 字节数 |
+| `mcp__workspace__list_dir` | 目录清单 |
+
+接入过程就是标准 MCP 四步：`initialize` 握手 → `tools/list` 拉清单 → `tools/call` 调用 → 关闭。
+发现到的工具会带 `mcp__` 前缀注册进同一张工具表，模型调用方式和本地工具完全一致。
+
+```bash
+python -m mcp_servers.workspace_server   # 单独跑 server（调试用）
+```
+
+打包后的 exe 自带 server 角色：`MiniCursor.exe --mcp-stdio` 会让它以 MCP server 方式运行
+（exe 里没有 python 解释器，所以"自己 spawn 自己"）。
+
 ## 目录结构
 
 ```
@@ -51,6 +72,8 @@ desktop-agent/
 │       ├── fs.py        # read / write
 │       ├── patch.py     # edit
 │       └── shell.py     # bash
+├── mcp_servers/
+│   └── workspace_server.py  # 独立 MCP server（时间 / 文件统计 / 目录列举）
 ├── server/app.py        # FastAPI + WebSocket：把每一步实时推给界面
 ├── ui/                  # 界面（零框架：index.html + style.css + app.js）
 └── tests/               # 自测：工具层 29 条 + 服务层 18 条

@@ -12,21 +12,21 @@ window.py —— 桌面窗口入口（最终交付形态）
 为什么端口要动态找：
     固定 8000 端口，同学机器上很可能被别的程序占着，
     一占就是"打不开"，现场演示直接翻车。所以 bind 0 让系统分配。
+
+隐藏用法（打包成 exe 之后，MCP 就靠这个）：
+    MiniCursor.exe --mcp-stdio
+    这时它不打开窗口，而是把自己当成 MCP server 跑在 stdio 上。
+    因为 exe 里没有 python 解释器，所以"自己 spawn 自己"是唯一可行做法。
 """
 from __future__ import annotations
 
+import io
+import os
 import socket
 import sys
 import threading
 import time
 import webbrowser
-
-import requests
-import uvicorn
-
-from server.app import app
-
-TITLE = "Mini Cursor · 我的桌面编程智能体"
 
 
 def free_port() -> int:
@@ -35,29 +35,41 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_until_ready(port: int, timeout: float = 15.0) -> bool:
-    """等后端真的能响应再开窗口，否则会先闪一个白屏。"""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            if requests.get(f"http://127.0.0.1:{port}/api/health", timeout=0.5).ok:
-                return True
-        except requests.RequestException:
-            time.sleep(0.15)
-    return False
+def _run_mcp_stdio() -> None:
+    """把当前进程变成 MCP server（stdio 传输）。
+
+    --noconsole 打包的 exe 里 sys.stdout / sys.stdin 是 None，
+    但子进程的 fd 0/1 是真实存在的管道，重新包一层就能用。
+    """
+    if sys.stdout is None:
+        sys.stdout = io.TextIOWrapper(os.fdopen(1, "wb"), encoding="utf-8", line_buffering=True)
+    if sys.stdin is None:
+        sys.stdin = io.TextIOWrapper(os.fdopen(0, "rb"), encoding="utf-8")
+
+    from mcp_servers.workspace_server import main as server_main
+
+    server_main()
 
 
 def main() -> None:
+    if "--mcp-stdio" in sys.argv:
+        _run_mcp_stdio()
+        return
+
+    import requests
+    import uvicorn
+
+    from server.app import app
+
     port = free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True).start()
 
-    if not wait_until_ready(port):
-        print("后端没能在 15 秒内启动，请检查依赖是否装全：pip install -r requirements.txt")
-        sys.exit(1)
-
     url = f"http://127.0.0.1:{port}/"
+    if not _wait_until_ready(url, requests):
+        print("后端没能在 20 秒内启动，请检查依赖是否装全：pip install -r requirements.txt")
+        sys.exit(1)
 
     try:
         import webview
@@ -71,8 +83,8 @@ def main() -> None:
         except KeyboardInterrupt:
             return
 
-    window = webview.create_window(
-        TITLE,
+    webview.create_window(
+        "Mini Cursor · 我的桌面编程智能体",
         url=url,
         width=1280,
         height=860,
@@ -81,6 +93,18 @@ def main() -> None:
     )
     webview.start()  # 阻塞在这里，直到窗口被关闭
     server.should_exit = True
+
+
+def _wait_until_ready(url: str, requests_mod, timeout: float = 20.0) -> bool:
+    """等后端真的能响应再开窗口，否则会先闪一个白屏。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if requests_mod.get(f"{url}api/health", timeout=0.5).ok:
+                return True
+        except requests_mod.RequestException:
+            time.sleep(0.15)
+    return False
 
 
 if __name__ == "__main__":

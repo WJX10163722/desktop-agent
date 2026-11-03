@@ -28,8 +28,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from contextlib import asynccontextmanager
+
 from agent.config import config
 from agent.loop import Agent
+from agent.mcp_client import attach_mcp_tools
 from agent.tools import build_default_registry
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -50,7 +53,26 @@ def _ui_dir() -> Path:
 
 UI_DIR = _ui_dir()
 
-app = FastAPI(title="桌面编程智能体", version="0.4.0")
+# 全局唯一的工具注册表：本地四工具 + （可选）MCP 外部工具
+TOOL_REGISTRY = build_default_registry()
+MCP_CLIENT = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """服务启动时接一次 MCP server，关闭时断开。
+
+    MCP 失败不影响主程序：attach_mcp_tools 内部吞掉异常，只打印一行提示。
+    """
+    global MCP_CLIENT
+    if os.getenv("AGENT_MCP", "1") != "0":
+        MCP_CLIENT = attach_mcp_tools(TOOL_REGISTRY)
+    yield
+    if MCP_CLIENT is not None:
+        MCP_CLIENT.stop()
+
+
+app = FastAPI(title="桌面编程智能体", version="0.5.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
 
 
@@ -64,7 +86,8 @@ async def health() -> dict:
     """给启动脚本用：窗口打开前先确认后端活着。"""
     return {
         "ok": True,
-        "tools": build_default_registry().names,
+        "tools": TOOL_REGISTRY.names,
+        "mcp": [n for n in TOOL_REGISTRY.names if n.startswith("mcp__")],
         "workspace": str(config.workspace),
         "mock": os.getenv("AGENT_MOCK") == "1",
     }
@@ -79,8 +102,8 @@ def create_agent(on_event) -> Agent:
             {"tool": "bash", "args": {"command": "python --version"}},
             "（mock 模式）四个工具都在线，界面链路已跑通。",
         ]
-        return Agent(mock=True, mock_script=script, on_event=on_event)
-    return Agent(on_event=on_event)
+        return Agent(mock=True, mock_script=script, on_event=on_event, registry=TOOL_REGISTRY)
+    return Agent(on_event=on_event, registry=TOOL_REGISTRY)
 
 
 @app.websocket("/ws")
