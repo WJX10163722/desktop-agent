@@ -28,6 +28,7 @@ Release：<https://github.com/WJX10163722/desktop-agent/releases/tag/v1.0.0>
 │  loop.py    循环：思考→调工具→看结果→再思考         │
 │  tools/     ToolRegistry：工具是注册进来的，不是 if-else│
 │  llm.py     模型适配层 + MockLLM（无 Key 可跑全部测试）│
+│  session.py  会话持久化（原子写、坏文件容错）         │
 │  mcp_client.py  MCP 客户端（官方 SDK，stdio 子进程）  │
 └──────────────────────────────────────────────────┘
 ```
@@ -73,8 +74,10 @@ Release：<https://github.com/WJX10163722/desktop-agent/releases/tag/v1.0.0>
 1. **bash 没有真沙箱**：文件工具的路径有沙箱，但 bash 命令本身可以用
    `..\` 访问工作目录外（Windows 上也没有干净的 namespace 隔离手段）。
    目前的缓解是危险命令黑名单 + 超时，理论上更完备的方案是 Windows Sandbox / Job Object。
-2. **会话不持久**：关窗口上下文就没了（PPT 提到会话持久化是加分项，本次未做）。
-3. **上下文不压缩**：长对话会线性增长 token，没做摘要压缩（同样是加分项未做）。
+2. **只保留最近一次会话**：持久化做了（`sessions/last.json`），但不支持多会话切换，
+   也没做"历史会话列表"——想回到上周那次对话就没了。
+3. **压缩是启发式的**：按字符估算 + 规则摘要，不调模型做真摘要。
+   好处是稳、不花钱；坏处是摘要会丢细节，长任务中途压缩后模型偶尔会"忘事"。
 4. **MCP server 是自己写的**：协议是真协议（官方 SDK、标准 JSON-RPC），
    但工具比较简单；接一个第三方 GitHub/文件系统 server 是下一步方向。
 
@@ -85,8 +88,9 @@ python tests/test_tools.py    29 条：注册/兜底/分页/沙箱/edit 五情�
 python tests/test_server.py   18 条：HTTP/WebSocket 事件流/异常输入（内置 mock）
 python tests/test_mcp.py      13 条：握手/tools list/tools call/沙箱/注册表集成
 python tests/test_agent.py    16 条：重试策略（网络/401/5xx）与上下文压缩边界
+python tests/test_session.py  22 条：存取往返/坏文件容错/悬空调用清洗
 ────────────────────────────────
-合计 76 条，全部不依赖网络与 API Key
+合计 98 条，全部不依赖网络与 API Key
 ```
 
 ## 六之二、稳定性两个机制
@@ -105,7 +109,8 @@ python tests/test_agent.py    16 条：重试策略（网络/401/5xx）与上下
 4. `在 demo 文件夹建 notes.txt 写三行内容并用命令打印` → write + bash 连击
 5. `现在几点了？统计 main.py 行数` → 三张 `mcp__workspace__*` 卡片（MCP 调用成功）
 6. 中途点停止 → 立刻中断，出现"已中断"提示（中断是真停）
-7. 说最不满意的地方：bash 沙箱与上下文压缩（见第五节）
+7. 关掉窗口再打开 → 上次对话自动恢复（会话持久化）
+8. 说最不满意的地方：bash 沙箱与只保留最近一次会话（见第五节）
 
 ## 八、运行方式（三步启动）
 

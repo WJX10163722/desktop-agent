@@ -102,8 +102,11 @@ def create_agent(on_event) -> Agent:
             {"tool": "bash", "args": {"command": "python --version"}},
             "（mock 模式）四个工具都在线，界面链路已跑通。",
         ]
-        return Agent(mock=True, mock_script=script, on_event=on_event, registry=TOOL_REGISTRY)
-    return Agent(on_event=on_event, registry=TOOL_REGISTRY)
+        # mock 模式不落盘：测试跑一次就往 sessions/ 里塞一堆假历史，很脏
+        return Agent(
+            mock=True, mock_script=script, on_event=on_event, registry=TOOL_REGISTRY, persist=False
+        )
+    return Agent(on_event=on_event, registry=TOOL_REGISTRY, persist=os.getenv("AGENT_PERSIST", "1") != "0")
 
 
 @app.websocket("/ws")
@@ -130,6 +133,11 @@ async def agent_socket(ws: WebSocket) -> None:
         "workspace": str(config.workspace),
         "model": "mock" if os.getenv("AGENT_MOCK") == "1" else config.model,
     })
+
+    # 上次的历史：关窗口再打开，对话还在（这就是"会话持久化"）
+    history = agent.visible_history()
+    if history:
+        await ws.send_json({"type": "history", "messages": history})
 
     sender = asyncio.create_task(_sender(ws, queue))
     run_task: asyncio.Task | None = None

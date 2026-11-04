@@ -51,6 +51,14 @@ function handle(ev) {
       setStatus("online", "就绪");
       break;
 
+    case "history":
+      // 上次关窗口前的对话：这里只回放"人说的话"，工具卡片不补画
+      if (!ev.messages || !ev.messages.length) break;
+      ev.messages.forEach((m) => addMsg(m.role === "user" ? "user" : "assistant", m.content));
+      lastAssistantText = ev.messages[ev.messages.length - 1].content || "";
+      addMsg("system", "已恢复上次的对话记录（点「新建会话」可清空）");
+      break;
+
     case "assistant_message":
       if (ev.content) {
         lastAssistantText = ev.content;

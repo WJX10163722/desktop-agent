@@ -104,7 +104,7 @@ def test_compress() -> None:
     print("\n[2] 上下文压缩")
 
     events: list[dict] = []
-    agent = Agent(mock=True, mock_script=["ok"], on_event=events.append)
+    agent = Agent(mock=True, mock_script=["ok"], on_event=events.append, persist=False)
 
     # 短历史不该被压缩（压缩本身也有代价，别没事找事）
     agent.messages.append({"role": "user", "content": "短对话"})

@@ -38,7 +38,10 @@ def make_agent(mock: bool, max_turns: int | None, demo_script: list | None = Non
         elif kind == "error":
             print(f"  [异常] {event['message']}")
 
-    return Agent(mock=mock, mock_script=demo_script, max_turns=max_turns, on_event=printer)
+    # CLI 调试不写会话文件：免得命令行试一句就把界面的历史覆盖掉
+    return Agent(
+        mock=mock, mock_script=demo_script, max_turns=max_turns, on_event=printer, persist=False
+    )
 
 
 DEMO_SCRIPT = [

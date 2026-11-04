@@ -21,8 +21,10 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
+from . import session
 from .config import config
 from .llm import LLMReply, Message, build_llm
 from .prompts import SYSTEM_TOOL
@@ -75,6 +77,8 @@ class Agent:
         system_prompt: str | None = None,
         registry: ToolRegistry | None = None,
         on_event: EventHook | None = None,
+        session_path: Path | None = None,
+        persist: bool = True,
     ) -> None:
         self.llm = build_llm(mock=mock) if not mock else _mock_llm(mock_script)
         self.max_turns = max_turns or config.max_turns
@@ -85,12 +89,40 @@ class Agent:
         self.messages: list[Message] = [{"role": "system", "content": self.system_prompt}]
         # 中断开关：界面点"停止"时置位，循环在下一个安全点真退出
         self._stop = threading.Event()
+        # 会话持久化：默认存 sessions/last.json（.gitignore 已排除，不会入库）
+        self.session_path: Path | None = (session_path or session.SESSION_FILE) if persist else None
+        self.restore()
 
     # ---------- 会话 ----------
     def reset(self) -> None:
         """开新会话。界面上的"新建"按钮调它。"""
         self.messages = [{"role": "system", "content": self.system_prompt}]
         self._stop.clear()
+        self.clear_session()
+
+    def restore(self) -> int:
+        """启动时把上次的历史读回来，返回恢复的消息条数。"""
+        if not self.session_path:
+            return 0
+        saved = session.load(self.session_path)
+        if not saved:
+            return 0
+        # system prompt 用当前的（提示词改过之后不能还拿旧的）
+        body = [m for m in saved if m.get("role") != "system"]
+        self.messages = [{"role": "system", "content": self.system_prompt}, *body]
+        return len(body)
+
+    def save_session(self) -> None:
+        if self.session_path:
+            session.save(self.messages, self.session_path)
+
+    def clear_session(self) -> None:
+        if self.session_path:
+            session.clear(self.session_path)
+
+    def visible_history(self) -> list[Message]:
+        """给界面回放的精简历史（只有用户提问与助手回答）。"""
+        return session.visible(self.messages)
 
     def cancel(self) -> None:
         """中断当前任务。
@@ -198,6 +230,17 @@ class Agent:
 
     # ---------- 主循环 ----------
     def run(self, user_input: str) -> RunResult:
+        """对外入口：跑一次任务，结束后落盘。
+
+        放在 finally 里存：出错、中断也照样保留历史——
+        "刚才跑到一半崩了"恰恰是用户最想接着聊的时候。
+        """
+        try:
+            return self._run(user_input)
+        finally:
+            self.save_session()
+
+    def _run(self, user_input: str) -> RunResult:
         self._stop.clear()
         self.messages.append({"role": "user", "content": user_input})
         self._emit("user_message", content=user_input)
