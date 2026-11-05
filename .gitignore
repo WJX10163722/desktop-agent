@@ -29,3 +29,6 @@ hello.txt
 logs/
 sessions/
 *.log
+
+# 个人定时任务配置（示例见 routines.example.yaml）
+routines.yaml

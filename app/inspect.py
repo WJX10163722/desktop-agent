@@ -214,6 +214,53 @@ def build_custom_report(skip_reviewer: bool = False) -> dict:
     return report
 
 
+def build_daemon_report() -> dict:
+    """增量 C：定时触发 / 断点续跑 / 完成通知 / 幂等。
+
+    四项都是"真的跑一遍"：触发器真起线程，续跑真被 max_turns 掐断，
+    通知真弹托盘——不是把字段填成 true。
+    """
+    import tempfile
+    import time as _time
+
+    from agent import routines as routines_mod
+    from agent.loop import Agent
+    from agent.notify import notify
+
+    report: dict = {}
+
+    # ① 定时触发：1 秒间隔、跑约 3 秒，看真的触发了几次
+    routine = routines_mod.Routine(name="demo-heartbeat", every=1, skill="run-tests")
+    runner = routines_mod.RoutineRunner([routine], lambda r: None, tick=0.2)
+    runner.start()
+    _time.sleep(3.2)
+    runner.stop()
+    report["triggers_fired"] = runner.triggers_fired
+    report["idempotent"] = runner.idempotent
+
+    # ② 断点续跑：把任务强制掐断在第 3 轮，模拟 kill -9 留下的现场，再 resume
+    with tempfile.TemporaryDirectory() as d:
+        session_path = Path(d) / "last.json"
+        scripted = [
+            {"tool": "read", "args": {"path": "requirements.txt"}},
+            {"tool": "read", "args": {"path": "requirements.txt"}},
+            {"tool": "read", "args": {"path": "requirements.txt"}},
+        ]
+        crashed = Agent(
+            mock=True, mock_script=scripted, session_path=session_path, max_turns=3
+        )
+        crashed.run("把依赖读三遍（脚本场景）")
+        # 新实例 = 重启后的进程
+        restarted = Agent(mock=True, session_path=session_path)
+        report["resume_from_step"] = restarted.resume()
+        report["resume_messages"] = len(restarted.messages)
+
+    # ③ 完成通知：真弹一次托盘气泡（用户能不能看见不重要，发没发出去重要）
+    report["notify_fired"] = notify("MiniCursor 验收", "daemon_report 正在生成")
+
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="app.inspect")
     sub = parser.add_subparsers(dest="target", required=True)
@@ -226,7 +273,8 @@ def main() -> int:
     p_custom.add_argument("--out", default="")
     p_custom.add_argument("--skip-reviewer", action="store_true", help="跳过真实模型审查")
 
-    sub.add_parser("daemon", help="生成 daemon_report.json（增量 C）")
+    p_daemon = sub.add_parser("daemon", help="生成 daemon_report.json")
+    p_daemon.add_argument("--out", default="")
 
     args = parser.parse_args()
 
@@ -235,8 +283,7 @@ def main() -> int:
     elif args.target == "custom":
         report = build_custom_report(skip_reviewer=args.skip_reviewer)
     else:
-        print("增量 C 还没实现", file=sys.stderr)
-        return 2
+        report = build_daemon_report()
 
     text = json.dumps(report, ensure_ascii=False, indent=1)
     print(text)

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import agents_md, session
+from . import agents_md, checkpoint, session
 from .config import config
 from .hooks import HookEngine
 from .llm import LLMReply, Message, build_llm
@@ -98,6 +98,10 @@ class Agent:
         self._stop = threading.Event()
         # 会话持久化：默认存 sessions/last.json（.gitignore 已排除，不会入库）
         self.session_path: Path | None = (session_path or session.SESSION_FILE) if persist else None
+        # 断点续跑的落盘位置（增量 C）：跟会话文件同目录，任务改动前先看它
+        self._ckpt_path: Path | None = checkpoint.path_for(self.session_path) if self.session_path else None
+        self.resume_from_step: int | None = None
+        self._resumed_input = ""
         self.restore()
         # 技能系统（增量 A）：目录进 system prompt，正文靠 use_skill 按需加载
         self.skills = self._attach_skills()
@@ -274,11 +278,43 @@ class Agent:
 
         放在 finally 里存：出错、中断也照样保留历史——
         "刚才跑到一半崩了"恰恰是用户最想接着聊的时候。
+        checkpoint 例外：任务正常结束就删掉，否则下次启动会"续跑"一个已经完成的任务。
         """
         try:
-            return self._run(user_input)
+            result = self._run(user_input)
         finally:
             self.save_session()
+        if result.stop_reason in ("done", "cancelled"):
+            self.clear_checkpoint()
+        return result
+
+    # ---------- 断点续跑（增量 C） ----------
+    def _save_checkpoint(self, user_input: str, step: int) -> None:
+        if self._ckpt_path:
+            checkpoint.save(self._ckpt_path, user_input, step, self.messages)
+
+    def clear_checkpoint(self) -> None:
+        if self._ckpt_path:
+            checkpoint.clear(self._ckpt_path)
+
+    def resume(self) -> int | None:
+        """从 checkpoint 恢复现场，返回"从第几步继续"。
+
+        注意只恢复现场、不自动开跑：要不要继续由调用方决定——
+        启动时静默跑一个半小时的任务，比不跑更吓人。
+        """
+        if not self._ckpt_path:
+            return None
+        data = checkpoint.load(self._ckpt_path)
+        if not data:
+            return None
+        restored = session.sanitize(data["messages"])
+        if not restored:
+            return None
+        self.messages = restored
+        self.resume_from_step = int(data.get("step", 0))
+        self._resumed_input = str(data.get("user_input", ""))
+        return self.resume_from_step
 
     def _run(self, user_input: str) -> RunResult:
         self._stop.clear()
@@ -333,6 +369,10 @@ class Agent:
                         "tool_call_id": call.get("id", ""),
                         "content": f"{'OK' if record.ok else 'ERROR'}\n{record.content}",
                     })
+
+                # 每轮结束落一次 checkpoint：kill -9 不给回调机会，
+                # 只有"每步都写完"，重启才能从断点续跑（增量 C）
+                self._save_checkpoint(user_input, turn_index + 1)
 
             # 刹车踩到底：模型一直不肯收尾
             return RunResult(

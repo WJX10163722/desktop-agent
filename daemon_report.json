@@ -1,0 +1,7 @@
+{
+ "triggers_fired": 4,
+ "idempotent": true,
+ "resume_from_step": 3,
+ "resume_messages": 8,
+ "notify_fired": true
+}

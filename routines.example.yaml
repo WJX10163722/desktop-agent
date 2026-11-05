@@ -1,0 +1,14 @@
+# 定时任务示例：复制成 routines.yaml 就生效（两者都在 .gitignore 里，避免误提交个人配置）
+#
+# 字段：
+#   name   任务名（同名的 time slot 只会触发一次，保证幂等）
+#   every  间隔秒数
+#   skill  要执行的技能名（skills/ 目录下的名字，留空只记日志不跑模型）
+
+- name: nightly-test
+  every: 3600
+  skill: run-tests
+
+- name: project-brief
+  every: 1800
+  skill: project-brief

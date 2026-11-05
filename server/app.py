@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -56,6 +57,46 @@ UI_DIR = _ui_dir()
 # 全局唯一的工具注册表：本地四工具 + （可选）MCP 外部工具
 TOOL_REGISTRY = build_default_registry()
 MCP_CLIENT = None
+ROUTINE_RUNNER = None
+
+
+def _start_routines():
+    """定时任务（增量 C）：routines.yaml 里每有条目，到点就跑一次技能。
+
+    为什么不在这里 await：定时触发必须独立于界面连接——
+    用户没开窗口，任务照样该跑。
+    """
+    from agent import routines as routines_mod
+
+    items = routines_mod.load(config.workspace)
+    if not items:
+        return None
+
+    log_dir = Path(config.workspace) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "routines.log"
+
+    def _fire(routine) -> None:
+        line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] trigger={routine.name} skill={routine.skill}\n"
+        try:
+            log_file.open("a", encoding="utf-8").write(line)
+        except OSError:
+            pass
+        # 真正跑一次技能：没有 Key 时只记日志，不让定时任务把界面搞崩
+        if not config.api_key or not routine.skill:
+            return
+        try:
+            worker = Agent(session_path=None, persist=False)
+            worker.run(f"请按 {routine.skill} 技能执行一次，完成后一句话汇报结果。")
+        except Exception as e:  # noqa: BLE001
+            try:
+                log_file.open("a", encoding="utf-8").write(f"  失败：{type(e).__name__}: {e}\n")
+            except OSError:
+                pass
+
+    runner = routines_mod.RoutineRunner(items, _fire, tick=5.0)
+    runner.start()
+    return runner
 
 
 @asynccontextmanager
@@ -63,11 +104,15 @@ async def lifespan(_app: FastAPI):
     """服务启动时接一次 MCP server，关闭时断开。
 
     MCP 失败不影响主程序：attach_mcp_tools 内部吞掉异常，只打印一行提示。
+    顺带启动定时任务（增量 C）：工作目录有 routines.yaml 才会真的跑。
     """
-    global MCP_CLIENT
+    global MCP_CLIENT, ROUTINE_RUNNER
     if os.getenv("AGENT_MCP", "1") != "0":
         MCP_CLIENT = attach_mcp_tools(TOOL_REGISTRY)
+    ROUTINE_RUNNER = _start_routines()
     yield
+    if ROUTINE_RUNNER is not None:
+        ROUTINE_RUNNER.stop()
     if MCP_CLIENT is not None:
         MCP_CLIENT.stop()
 
@@ -134,6 +179,14 @@ async def agent_socket(ws: WebSocket) -> None:
         "model": "mock" if os.getenv("AGENT_MOCK") == "1" else config.model,
     })
 
+    # 断点续跑（增量 C）：上次任务被强杀在半路，重启后先把现场捞回来
+    resumed_from = agent.resume()
+    if resumed_from:
+        await ws.send_json({
+            "type": "notice",
+            "message": f"检测到上次未完成的任务，已从第 {resumed_from} 步恢复现场；接着说一句就能继续。",
+        })
+
     # 上次的历史：关窗口再打开，对话还在（这就是"会话持久化"）
     history = agent.visible_history()
     if history:
@@ -190,6 +243,7 @@ async def agent_socket(ws: WebSocket) -> None:
 
 async def _run_chat(agent: Agent, text: str, queue: asyncio.Queue) -> None:
     """把阻塞的 agent.run 丢到线程里跑，跑完推一条 done。"""
+    started = time.time()
     try:
         result = await asyncio.to_thread(agent.run, text)
         await queue.put({
@@ -198,6 +252,14 @@ async def _run_chat(agent: Agent, text: str, queue: asyncio.Queue) -> None:
             "error": result.error,
             "stop_reason": result.stop_reason,
         })
+        # 完成通知（增量 C）：只有跑得久才弹——
+        # 用户盯着屏幕时每句都弹托盘，是骚扰不是功能
+        if time.time() - started > 20 and os.getenv("AGENT_NOTIFY", "1") != "0":
+            from agent.notify import notify
+
+            await asyncio.to_thread(
+                notify, "MiniCursor 任务完成", (result.answer or result.error or "")[:60]
+            )
     except Exception as e:  # noqa: BLE001
         await queue.put({"type": "done", "answer": "", "error": f"{type(e).__name__}: {e}", "stop_reason": "error"})
 

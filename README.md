@@ -237,13 +237,20 @@ desktop-agent/
 
 ## 12. 增量作业：技能系统与定制层
 
-对应标签：`v1.1`（技能系统）、`v1.2`（定制层）。两份验收数字由程序生成，不含手写表格：
+对应标签：`v1.1`（技能系统）、`v1.2`（定制层）、`v1.3`（常驻）。三份验收数字由程序生成，不含手写表格：
 
 ```bash
-python -m app.selftest                                   # 全量自检（159 项）
+python -m app.selftest                                   # 全量自检（180 项）
 python -m app.inspect skills --out skill_report.json     # 技能系统验收
 python -m app.inspect custom --out custom_report.json    # 定制层验收
+python -m app.inspect daemon --out daemon_report.json    # 常驻能力验收
 ```
+
+### 常驻能力（增量 C，选做）
+
+- **断点续跑**：每轮结束把现场写入 `sessions/checkpoint.json`，任务被强杀后重启会提示"已从第 N 步恢复现场"；任务正常结束会删掉检查点，不会"续跑"一个已完成的任务。
+- **定时触发**：`routines.example.yaml` 复制成 `routines.yaml` 后，服务启动即按间隔执行技能，日志写 `logs/routines.log`；同一时间槽只触发一次（幂等）。
+- **完成通知**：任务超过 20 秒才弹托盘气泡，避免盯着屏幕时被打扰；`AGENT_NOTIFY=0` 可关闭。
 
 | 验收项 | 实测值 | 及格线 |
 |---|---|---|
@@ -254,6 +261,9 @@ python -m app.inspect custom --out custom_report.json    # 定制层验收
 | `denied`（拒绝记录，均带 reason） | 2 条 | ≥ 2 |
 | `autotest.red_to_green` | 1（真的红、真的绿） | ≥ 1 |
 | `reviewer.main_context_delta` | 340 字 | ≤ 500 |
+| `daemon.triggers_fired` / `idempotent` | 4 次 / true | 能触发且不重复 |
+| `daemon.resume_from_step` | 3 | 断点续跑 |
+| `daemon.notify_fired` | true | 通知能发出 |
 
 两个开关（现场验收可直接对比，同一份代码）：
 
