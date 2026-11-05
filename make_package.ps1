@@ -75,6 +75,22 @@ if ($video -and (Test-Path $video)) {
     Write-Host "  !! 没找到 demo.mp4，请录完再跑一次（或用 -VideoPath 指定路径）" -ForegroundColor Yellow
 }
 
+# 增量作业的演示单独一段（两个作业各自要求 5 分钟，合成十分钟两头都不满足）
+$videoInc = @(
+    (Join-Path $root "demo_增量.mp4"),
+    (Join-Path $root "demo-increment.mp4"),
+    (Join-Path $env:USERPROFILE "Desktop\demo_增量.mp4"),
+    (Join-Path $env:USERPROFILE "Videos\demo_增量.mp4"),
+    (Join-Path $env:USERPROFILE "Downloads\demo_增量.mp4")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($videoInc) {
+    Copy-Item $videoInc (Join-Path $stage "02_演示视频\demo_增量.mp4")
+    $mb2 = [math]::Round((Get-Item $videoInc).Length / 1MB, 1)
+    Write-Host "  已放入 demo_增量.mp4（$mb2 MB）" -ForegroundColor Green
+} else {
+    Write-Host "  （增量演示 demo_增量.mp4 还没有，录完重跑即可）" -ForegroundColor Yellow
+}
+
 # ---------- 4. 源码（只打已提交的文件，天然不带 .env / dist / build） ----------
 Write-Host "[4/6] 导出源码（git archive：保证不含 .env 和构建产物）" -ForegroundColor Cyan
 $git = "D:\Git\cmd\git.exe"
@@ -201,7 +217,8 @@ $readme = @"
 
 二、压缩包内容
   01_报告/report.md                设计报告（含增量作业三节）
-  02_演示视频/demo.mp4             现场演示录屏
+  02_演示视频/demo.mp4             基础功能演示录屏（5 分钟）
+  02_演示视频/demo_增量.mp4        增量作业演示录屏（5 分钟）
   03_源码/                         完整源码（不含 .env，无密钥泄漏）
   04_程序/MiniCursor.exe           可双击运行的桌面程序
   05_增量作业/                      AGENTS.md、三份验收 JSON、自测原始输出、演示稿
