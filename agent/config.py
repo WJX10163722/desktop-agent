@@ -85,6 +85,10 @@ class Config:
         self.context_budget: int = int(os.getenv("AGENT_CONTEXT_BUDGET", "24000"))
         self.keep_recent: int = int(os.getenv("AGENT_KEEP_RECENT", "8"))
 
+        # 增量功能开关：验收时现场关掉跑一遍，before/after 必须同一份代码
+        self.enable_skills: bool = os.getenv("ENABLE_SKILLS", "1") != "0"
+        self.enable_hooks: bool = os.getenv("ENABLE_HOOKS", "1") != "0"
+
         # 工作目录：agent 能碰到的所有文件都被限制在这个目录里（沙箱）
         self.workspace: Path = Path(os.getenv("AGENT_WORKSPACE", str(ROOT_DIR))).expanduser().resolve()
         self.workspace.mkdir(parents=True, exist_ok=True)

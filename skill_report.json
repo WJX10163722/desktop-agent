@@ -1,0 +1,74 @@
+{
+ "skills": [
+  {
+   "name": "project-brief",
+   "has_scripts": false,
+   "uses_mcp": true
+  },
+  {
+   "name": "review-diff",
+   "has_scripts": true,
+   "uses_mcp": false
+  },
+  {
+   "name": "run-tests",
+   "has_scripts": false,
+   "uses_mcp": false
+  }
+ ],
+ "catalog_tokens": 180,
+ "full_tokens": 983,
+ "disclosure_ratio": 5.5,
+ "loader_errors": [],
+ "trials": [
+  {
+   "query": "帮我跑一下测试",
+   "expected": "run-tests",
+   "hit": "run-tests",
+   "ok": true
+  },
+  {
+   "query": "测试为什么挂了？",
+   "expected": "run-tests",
+   "hit": "run-tests",
+   "ok": true
+  },
+  {
+   "query": "把这段 diff 审一遍",
+   "expected": "review-diff",
+   "hit": "review-diff",
+   "ok": true
+  },
+  {
+   "query": "帮我 review 一下这次的改动",
+   "expected": "review-diff",
+   "hit": "review-diff",
+   "ok": true
+  },
+  {
+   "query": "这个项目是干什么的？",
+   "expected": "project-brief",
+   "hit": "project-brief",
+   "ok": true
+  },
+  {
+   "query": "盘点一下项目结构",
+   "expected": "project-brief",
+   "hit": "project-brief",
+   "ok": true
+  },
+  {
+   "query": "今天天气怎么样",
+   "expected": null,
+   "hit": null,
+   "ok": true
+  },
+  {
+   "query": "给我讲个笑话",
+   "expected": null,
+   "hit": null,
+   "ok": true
+  }
+ ],
+ "false_positive": 0
+}

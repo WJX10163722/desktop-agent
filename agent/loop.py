@@ -29,6 +29,7 @@ from .config import config
 from .llm import LLMReply, Message, build_llm
 from .prompts import SYSTEM_TOOL
 from .tools import ToolRegistry, build_default_registry
+from .tools.base import Tool, ToolResult
 
 
 @dataclass
@@ -92,6 +93,8 @@ class Agent:
         # 会话持久化：默认存 sessions/last.json（.gitignore 已排除，不会入库）
         self.session_path: Path | None = (session_path or session.SESSION_FILE) if persist else None
         self.restore()
+        # 技能系统（增量 A）：目录进 system prompt，正文靠 use_skill 按需加载
+        self.skills = self._attach_skills()
 
     # ---------- 会话 ----------
     def reset(self) -> None:
@@ -123,6 +126,30 @@ class Agent:
     def visible_history(self) -> list[Message]:
         """给界面回放的精简历史（只有用户提问与助手回答）。"""
         return session.visible(self.messages)
+
+    # ---------- 技能（增量 A） ----------
+    def _attach_skills(self):
+        """把技能目录塞进 system prompt，并把 use_skill 注册为工具。
+
+        渐进披露的落点就在这：常驻上下文的只有"每个技能一行"的目录，
+        正文要等模型调 use_skill(name) 才进来。
+        """
+        if not config.enable_skills:
+            return None
+        from .skills import SkillLoader
+        loader = SkillLoader()
+        if not len(loader):
+            return None
+        # server 在多个连接间复用同一张注册表，重复 attach 时跳过注册
+        if "use_skill" not in self.registry.names:
+            self.registry.register(_build_use_skill_tool(loader))
+        self.system_prompt += (
+            "\n\n## 可用技能（这里只是目录）\n"
+            f"{loader.catalog_text()}\n"
+            "判断某个技能适用时，先调 use_skill(name) 加载完整步骤再动手；"
+            "都不适用就直接干活，不要为了用而用。"
+        )
+        return loader
 
     def cancel(self) -> None:
         """中断当前任务。
@@ -332,3 +359,35 @@ class Agent:
 def _mock_llm(script: list | None):
     from .llm import MockLLM
     return MockLLM(script=script)
+
+
+def _build_use_skill_tool(loader) -> Tool:
+    """use_skill：把某个技能的完整正文注入上下文。
+
+    注意它返回的是"说明书"而不是执行结果——
+    模型拿到步骤后还要自己调 read/write/bash 去执行，这正是技能和工具的分界。
+    """
+
+    def _use_skill(name: str) -> ToolResult:
+        skill = loader.get(name)
+        if skill is None:
+            return ToolResult.failure(
+                f"没有名为 `{name}` 的技能。可用技能：{', '.join(loader.names()) or '（无）'}"
+            )
+        return ToolResult.success(skill.full_text)
+
+    return Tool(
+        name="use_skill",
+        description=(
+            "按需加载一个技能的完整操作步骤。目录已在系统提示里，"
+            "判断某个技能适用时调用它获取正文；不要凭记忆猜步骤。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "技能名，见系统提示里的目录"}
+            },
+            "required": ["name"],
+        },
+        func=_use_skill,
+    )
