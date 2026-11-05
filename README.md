@@ -62,6 +62,28 @@ Mini Cursor 是一个基于 Python、pywebview 和 DeepSeek 模型接口开发�
 
 发现到的工具以 `mcp__` 前缀注册进同一张工具表，模型调用方式与本地工具完全一致。
 
+### 2.5 技能系统（按需加载）
+
+`skills/` 下每个子目录是一个技能，由 `SKILL.md` 的 frontmatter（`name` + `description`）与正文组成。启动时**只把目录**（每个技能一行）放进 system prompt，正文要等模型调用 `use_skill(name)` 时才注入——这就是渐进披露。
+
+| 技能 | 形态 | 说明 |
+|---|---|---|
+| `run-tests` | 纯提示词 | 跑测试、只报失败三要素、不顺手改代码 |
+| `review-diff` | 提示词 + `scripts/collect_diff.py` | 先跑脚本拿裁剪过的 diff，再按五条清单审 |
+| `project-brief` | 提示词 + MCP 工具 | 编排 `now` / `list_dir` / `file_stats` 生成项目速览 |
+
+新增技能只需建目录写 `SKILL.md`，不改一行代码。`ENABLE_SKILLS=0` 可整体关闭。
+
+### 2.6 定制层
+
+- **AGENTS.md 自动注入**：启动时从工作目录向上找项目级 `AGENTS.md`，再读全局 `~/.mini_agents/AGENTS.md`，按"全局 → 项目"顺序拼进 system prompt；本项目自带的 `AGENTS.md` 是项目地图（构建命令与踩坑），不是文档。
+- **三条 hook（代码级硬约束，不是提示词建议）**：
+  1. 写 `.env` / `*.pem` / `*.key` → 拒绝，理由"密钥不入库，用环境变量"
+  2. `rm -rf` / `git push --force` / `git reset --hard` → 拒绝，并给出替代方案（`git clean -nd`、`git revert`、`git restore`）
+  3. `write` / `edit` 成功后自动跑快速测试，失败时只回注"哪条挂了"的摘要（≤3 行），不回注整段 traceback
+- **reviewer 子 agent**：`review_code` 工具发起一次只读审查（`read` + 限定 `git` 只读命令），固定五条清单，**只回最终清单**，主上下文增量控制在 500 字以内。
+- `ENABLE_HOOKS=0` 可关闭 hook（关闭后不拦截、不自动测试）。
+
 ## 3. 安全机制
 
 1. **工作区路径限制**：所有文件工具都会校验目标路径，`../` 等越界访问一律拒绝，避免访问工作目录以外的文件。
@@ -131,16 +153,19 @@ dist\MiniCursor.exe
 ## 8. 运行自动化测试
 
 ```bash
-python tests/test_tools.py     # 工具层
-python tests/test_server.py    # 服务层
-python tests/test_mcp.py       # MCP 集成
-python tests/test_agent.py     # 重试与上下文压缩
-python tests/test_session.py   # 会话持久化
+python -m app.selftest        # 一次跑完全部七组，输出 JSON
+python tests/test_tools.py    # 工具层
+python tests/test_server.py   # 服务层
+python tests/test_mcp.py      # MCP 集成
+python tests/test_agent.py    # 重试与上下文压缩
+python tests/test_session.py  # 会话持久化
+python tests/test_skills.py   # 技能加载与渐进披露
+python tests/test_custom.py   # hook 拦截、AGENTS.md、审查员隔离
 ```
 
-测试内容包括工具注册与参数校验、路径沙箱、文件读取分页、写入与覆盖、编辑的唯一匹配与失败不改动、命令超时与输出截断、危险命令拦截、WebSocket 事件流格式、异常输入处理、MCP 握手与工具调用、模型请求重试策略、上下文压缩边界、会话存取与损坏文件容错等。
+测试内容包括工具注册与参数校验、路径沙箱、文件读取分页、写入与覆盖、编辑的唯一匹配与失败不改动、命令超时与输出截断、危险命令拦截、WebSocket 事件流格式、异常输入处理、MCP 握手与工具调用、模型请求重试策略、上下文压缩边界、会话存取与损坏文件容错、技能目录与披露比、hook 拒绝与自动测试红转绿、审查员只读白名单等。
 
-截至本次更新，五组测试共执行 98 项，全部通过（工具层 29 项、服务层 18 项、MCP 13 项、智能体层 16 项、会话层 22 项），失败数量为 0。测试不依赖网络与 API Key。正式发布前仍应重新运行测试，并以实际运行结果作为最终测试记录。
+截至本次更新，七组测试共执行 159 项，全部通过（工具层 29、服务层 18、MCP 13、智能体层 16、会话层 22、技能层 21、定制层 40），失败数量为 0。测试不依赖网络与 API Key。正式发布前仍应重新运行测试，并以实际运行结果作为最终测试记录。
 
 ## 9. MCP 实现状态
 
@@ -163,30 +188,42 @@ desktop-agent/
 ├── requirements.txt         # 项目依赖
 ├── .env.example             # 环境变量配置模板
 ├── .gitignore               # Git 忽略规则
-├── report.md                # 设计报告
+├── report.md                # 设计报告（含增量作业三节）
+├── AGENTS.md                # 给 agent 看的项目地图（≤300 行，会被单独看）
+├── skill_report.json        # 技能系统验收数字（app.inspect 生成）
+├── custom_report.json       # 定制层验收数字（app.inspect 生成）
 ├── agent/                   # 智能体
 │   ├── loop.py              # 循环：思考 → 调工具 → 看结果 → 再思考
 │   ├── llm.py               # 模型接口与假模型
 │   ├── prompts.py           # 系统提示词
 │   ├── config.py            # 配置与 .env 加载
 │   ├── session.py           # 会话持久化（原子写、坏文件容错）
+│   ├── skills.py            # 技能加载器（渐进披露）
+│   ├── hooks.py             # PreToolUse / PostToolUse 硬约束
+│   ├── agents_md.py         # AGENTS.md 两层注入
+│   ├── reviewer.py          # 只读审查子 agent
 │   ├── mcp_client.py        # MCP 客户端
 │   └── tools/               # 本地工具
 │       ├── base.py          # 工具协议与注册表
 │       ├── fs.py            # read / write
 │       ├── patch.py         # edit
 │       └── shell.py         # bash
+├── skills/                  # 技能（每个子目录一个 SKILL.md）
+│   ├── run-tests/           #   纯提示词
+│   ├── review-diff/         #   提示词 + scripts/collect_diff.py
+│   └── project-brief/       #   提示词 + MCP 工具编排
 ├── mcp_servers/
 │   └── workspace_server.py  # 独立 MCP 服务端
 ├── server/
 │   └── app.py               # FastAPI + WebSocket 事件推送
 ├── ui/                      # 界面（index.html / style.css / app.js）
-└── tests/                   # 自动化测试
+├── app/                     # 验收命令（selftest / inspect）
+└── tests/                   # 自动化测试（七组）
 ```
 
 ## 11. 项目当前状态与后续改进
 
-当前版本已实现：桌面窗口与交互界面、DeepSeek 模型对话、四个本地工具、工具调用 trace 展示、任务中断、MCP 外部工具接入、模型请求失败自动重试、上下文自动压缩、会话持久化，并配有 98 项自动化测试。
+当前版本已实现：桌面窗口与交互界面、DeepSeek 模型对话、四个本地工具、工具调用 trace 展示、任务中断、MCP 外部工具接入、模型请求失败自动重试、上下文自动压缩、会话持久化、技能系统（渐进披露）、定制层（AGENTS.md + 三条 hook + 审查子 agent），并配有 159 项自动化测试。
 
 三个与"能不能当产品用"直接相关的机制：
 
@@ -198,7 +235,34 @@ desktop-agent/
 
 本项目对已实现功能与尚未实现功能进行区分，不将未完成的部分描述为已完成能力。
 
-## 12. 常见问题
+## 12. 增量作业：技能系统与定制层
+
+对应标签：`v1.1`（技能系统）、`v1.2`（定制层）。两份验收数字由程序生成，不含手写表格：
+
+```bash
+python -m app.selftest                                   # 全量自检（159 项）
+python -m app.inspect skills --out skill_report.json     # 技能系统验收
+python -m app.inspect custom --out custom_report.json    # 定制层验收
+```
+
+| 验收项 | 实测值 | 及格线 |
+|---|---|---|
+| `disclosure_ratio`（技能正文 / 目录 token 比） | 5.5 | ≥ 5 |
+| `trials` 路由实测命中 | 8 / 8（含 2 条"不该触发"） | ≥ 6 条且含反例 |
+| `false_positive`（闲聊误触发） | 0 | 必须 0 |
+| `agents_md.bytes` | 2446 | ≤ 12000 |
+| `denied`（拒绝记录，均带 reason） | 2 条 | ≥ 2 |
+| `autotest.red_to_green` | 1（真的红、真的绿） | ≥ 1 |
+| `reviewer.main_context_delta` | 340 字 | ≤ 500 |
+
+两个开关（现场验收可直接对比，同一份代码）：
+
+```bash
+ENABLE_SKILLS=0 python -m app.inspect skills --mock
+ENABLE_HOOKS=0  python -m app.inspect custom --skip-reviewer
+```
+
+## 13. 常见问题
 
 - **提示"还没有配置 API Key"**：确认 `.env` 与 `window.py` 在同一目录，且 `DEEPSEEK_API_KEY=` 后面没有多余空格；改完要重启程序。
 - **模型回答很慢**：默认超时 120 秒，期间界面显示"运行中"；等不及可以点停止。
@@ -206,7 +270,7 @@ desktop-agent/
 - **打开窗口是白屏**：大概率是界面文件没找到，去 exe 同目录看 `error.log`，把内容发出来排查。
 - **换了电脑跑不起来**：确认 Python 3.12 和 `pip install -r requirements.txt`，或者直接用 Release 里的 exe。
 
-## 13. 课程项目说明
+## 14. 课程项目说明
 
 本项目用于展示桌面智能体的基础架构设计、模型接口接入、本地工具封装、工具调用安全控制、MCP 协议集成与自动化测试等内容。
 

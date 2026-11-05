@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import session
+from . import agents_md, session
 from .config import config
+from .hooks import HookEngine
 from .llm import LLMReply, Message, build_llm
 from .prompts import SYSTEM_TOOL
 from .tools import ToolRegistry, build_default_registry
@@ -86,6 +87,11 @@ class Agent:
         self.registry = registry if registry is not None else build_default_registry()
         # 把工作目录写进 system prompt：模型不知道自己在哪，就会乱写相对路径
         self.system_prompt = system_prompt or f"{SYSTEM_TOOL}\n当前工作目录：{config.workspace}"
+        # AGENTS.md 注入（增量 B）：全局 → 项目两层。只对默认人格注入——
+        # 审查员这类专门角色有自己的守则，不该被主 agent 的地图稀释。
+        self.agents_md = agents_md.load(config.workspace) if system_prompt is None else {"found": False}
+        if self.agents_md.get("found"):
+            self.system_prompt = agents_md.inject(self.system_prompt, self.agents_md)
         self.on_event = on_event
         self.messages: list[Message] = [{"role": "system", "content": self.system_prompt}]
         # 中断开关：界面点"停止"时置位，循环在下一个安全点真退出
@@ -95,6 +101,13 @@ class Agent:
         self.restore()
         # 技能系统（增量 A）：目录进 system prompt，正文靠 use_skill 按需加载
         self.skills = self._attach_skills()
+        # hook 引擎（增量 B）：代码级硬约束，挂进工具执行路径
+        self.hooks = HookEngine(enabled=config.enable_hooks)
+        # review_code 只挂给默认人格（主 agent）。
+        # 专门角色（如 reviewer）不挂：否则审查员能调用审查员，无限递归——
+        # 这个 bug 是第一次真实审查时被模型自己撞出来的。
+        if system_prompt is None and "review_code" not in self.registry.names:
+            self.registry.register(_build_review_tool())
 
     # ---------- 会话 ----------
     def reset(self) -> None:
@@ -340,7 +353,22 @@ class Agent:
 
         self._emit("tool_start", name=name, arguments=raw_args)
         started = time.time()
-        result = self.registry.call(name, raw_args)
+
+        # PreToolUse hook：代码级硬约束，先于一切工具执行。
+        # 拒绝理由会作为 ERROR 消息喂回模型——带替代方案的拒绝，模型一步上正路。
+        deny_reason = self.hooks.pre_tool(name, _safe_parse_args(raw_args))
+        if deny_reason:
+            result = ToolResult.failure(f"[hook 拦截] {deny_reason}")
+        else:
+            result = self.registry.call(name, raw_args)
+            # PostToolUse hook：写/改完自动跑快速测试，失败摘要回注
+            injected = self.hooks.post_tool(name, result)
+            if injected:
+                result = ToolResult(
+                    ok=result.ok,
+                    content=result.content + "\n\n" + injected,
+                    meta=result.meta,
+                )
         elapsed = time.time() - started
 
         self._emit(
@@ -359,6 +387,54 @@ class Agent:
 def _mock_llm(script: list | None):
     from .llm import MockLLM
     return MockLLM(script=script)
+
+
+def _safe_parse_args(raw: str) -> dict:
+    """hook 检查用：解析失败就当空参数（真正的报错由 registry 兜底）。"""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _build_review_tool() -> Tool:
+    """review_code：发起一次审查子 agent。
+
+    子 agent 在自己的上下文里读 diff，只把最终清单传回主对话——
+    这就是"上下文隔离"，主上下文的增量只有那份清单。
+    """
+
+    def _review(scope: str = "") -> ToolResult:
+        from .reviewer import run_reviewer
+
+        report = run_reviewer(scope)
+        if report["error"]:
+            return ToolResult.failure(f"审查失败：{report['error']}")
+        content = report["final"] or "（审查员没有输出）"
+        return ToolResult.success(
+            f"{content}\n\n（审查账目：发现 {report['issues_found']} 个问题，"
+            f"主上下文仅增加 {report['main_context_delta']} 字，"
+            f"子 agent 消耗约 {report['subagent_tokens']} token）"
+        )
+
+    return Tool(
+        name="review_code",
+        description=(
+            "让一个只读的审查子 agent 检查当前未提交的代码改动（固定五条清单）。"
+            "改完代码想要一次自查时调用；它只回最终报告，不回中间过程。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "description": "重点关注的地方，可留空"}
+            },
+            "required": [],
+        },
+        func=_review,
+    )
 
 
 def _build_use_skill_tool(loader) -> Tool:

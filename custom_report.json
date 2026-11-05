@@ -1,0 +1,45 @@
+{
+ "switches": {
+  "ENABLE_SKILLS": true,
+  "ENABLE_HOOKS": true
+ },
+ "agents_md": {
+  "found": true,
+  "bytes": 2446,
+  "layers": [
+   "project"
+  ]
+ },
+ "denied": [
+  {
+   "tool": "write",
+   "path": ".env",
+   "reason": "密钥不入库，用环境变量"
+  },
+  {
+   "tool": "bash",
+   "command": "rm -rf build/",
+   "reason": "拒绝 rm -rf。替代方案：先 `git clean -nd` 预览会删什么；已跟踪的文件用 `git restore <文件>` 恢复。"
+  }
+ ],
+ "denied_results": {
+  "write_env": true,
+  "bash_rmrf": true
+ },
+ "denied_note": "以上为真实 PreToolUse 检查的记录，不是手写清单",
+ "autotest": {
+  "runs": 2,
+  "red": 1,
+  "green": 1,
+  "red_to_green": 1,
+  "injected_lines": 2,
+  "error": null
+ },
+ "reviewer": {
+  "runs": 1,
+  "issues_found": 5,
+  "main_context_delta": 365,
+  "subagent_tokens": 18293
+ },
+ "reviewer_final": "- [app/inspect.py:_run_autotest_scenario] 清单4：会改写 tests/test_tools.py 并依赖 finally 恢复，无对应测试覆盖\n- [app/inspect.py:build_custom_report] 清单3：`except Exception` 吞掉审查异常，仅写进报告 note\n- [skill_report.json] 清单1：生成产物被提交进 diff，应由 app.inspect 重新生成\n- [agent/loop.py:_build_review_tool] 清单4：新增 review_code 工具与 hook 拦截路径，未见对应测试改动\n- [app/inspect.py] 清单5：`import subprocess` 新增但未使用，属残留"
+}

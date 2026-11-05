@@ -19,7 +19,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SUITES = ["test_tools", "test_server", "test_mcp", "test_agent", "test_session", "test_skills"]
+SUITES = [
+    "test_tools", "test_server", "test_mcp", "test_agent",
+    "test_session", "test_skills", "test_custom",
+]
 _RESULT_RE = re.compile(r"(\d+)\s*\S*通过\S*\s*[，,]\s*(\d+)\s*\S*失\S*")
 
 
